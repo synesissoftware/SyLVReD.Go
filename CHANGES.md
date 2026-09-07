@@ -10,6 +10,7 @@
 * added CLI flags `--io-workers=<N>`, `--cpu-workers=<M>`, and `--telemetry` to `cmd/sylvred`;
 * added telemetry percentile and throughput summary table formatted via **woad.Go** and **Diagnosticism.Go**;
 * added comparative benchmark suite `pipeline_bench_test.go` evaluating Phase 1 sequential control against Phase 2 concurrent pipeline;
+* added worker-concurrency tuning benchmark covering serial, balanced, and oversubscribed configurations;
 * added comprehensive test coverage validating structured context cancellation, concurrency limits, and equivalence pruning;
 
 

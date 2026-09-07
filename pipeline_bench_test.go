@@ -135,4 +135,58 @@ func Benchmark_Scan_vs_PipelineScan_DistinctFiles(b *testing.B) {
 	})
 }
 
+func Benchmark_PipelineScan_WORKER_TUNING(b *testing.B) {
+
+	// 8 directories x 16 files = 128 duplicate files of 64 KiB each.
+	tree := createBenchmarkTree(b, 8, 16, 64*1024, true)
+	ctx := context.Background()
+
+	configurations := []struct {
+		name       string
+		ioWorkers  int
+		cpuWorkers int
+	}{
+		{
+			name:       "io1_cpu1",
+			ioWorkers:  1,
+			cpuWorkers: 1,
+		},
+		{
+			name:       "io16_cpu4",
+			ioWorkers:  16,
+			cpuWorkers: 4,
+		},
+		{
+			name:       "io32_cpu8",
+			ioWorkers:  32,
+			cpuWorkers: 8,
+		},
+		{
+			name:       "io64_cpu16",
+			ioWorkers:  64,
+			cpuWorkers: 16,
+		},
+	}
+
+	for _, configuration := range configurations {
+		b.Run(configuration.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				groups, err := sylvred.PipelineScan(ctx, tree, sylvred.PipelineOptions{
+					CPUWorkers: configuration.cpuWorkers,
+					IOWorkers:  configuration.ioWorkers,
+				})
+				if err != nil {
+					b.Fatalf("PipelineScan failed: %v", err)
+				}
+				if len(groups) != 1 || len(groups[0].Entries) != 128 {
+					b.Fatalf("unexpected candidate groups: %#v", groups)
+				}
+			}
+		})
+	}
+}
+
 /* ///////////////////////////// end of file //////////////////////////// */
