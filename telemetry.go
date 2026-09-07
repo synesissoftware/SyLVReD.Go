@@ -12,10 +12,26 @@ package sylvred
 import (
 	p99 "github.com/synesissoftware/p99.Go"
 
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// Describes one active interval on the pipeline timeline.
+type TimelineSpan struct {
+	End   time.Duration
+	Label string
+	Start time.Duration
+}
+
+// Contains the search and processing intervals recorded for one pipeline run.
+type TimelineSnapshot struct {
+	Processing      []TimelineSpan
+	ProcessingNames []string
+	Search          []TimelineSpan
+	SearchNames     []string
+}
 
 // Captures summary distribution statistics extracted from a p99.Histogram.
 type DistributionStats struct {
@@ -63,12 +79,21 @@ type Telemetry struct {
 	hashLatencyHist       *p99.Histogram
 	hashThroughputHist    *p99.Histogram
 
-	filesDiscovered      atomic.Uint64
-	prefixBlocksRead     atomic.Uint64
-	prefixHashesComputed atomic.Uint64
-	fullHashesComputed   atomic.Uint64
-	bytesHashed          atomic.Uint64
-	totalRuntimeNs       atomic.Uint64
+	filesDiscovered          atomic.Uint64
+	prefixBlocksRead         atomic.Uint64
+	prefixHashesComputed     atomic.Uint64
+	fullHashesComputed       atomic.Uint64
+	bytesHashed              atomic.Uint64
+	fileSearchDurationNs     atomic.Uint64
+	fileProcessingDurationNs atomic.Uint64
+	fileProcessingStartNs    atomic.Int64
+	timelineOriginNs         atomic.Int64
+	totalRuntimeNs           atomic.Uint64
+
+	processingSpans []TimelineSpan
+	processingNames []string
+	searchSpans     []TimelineSpan
+	searchNames     []string
 }
 
 // Constructs a new, fully initialized Telemetry manager.
@@ -181,6 +206,232 @@ func (t *Telemetry) TotalRuntime() time.Duration {
 	return time.Duration(t.totalRuntimeNs.Load())
 }
 
+// Sets the wall-clock origin used by subsequent timeline spans.
+func (t *Telemetry) SetTimelineOrigin(
+	origin time.Time,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.timelineOriginNs.Store(origin.UnixNano())
+}
+
+// Records one search-goroutine activity interval.
+func (t *Telemetry) RecordSearchSpan(
+	label string,
+	start time.Time,
+	end time.Time,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.recordTimelineSpan(&t.searchSpans, label, start, end)
+}
+
+// Registers a search goroutine for timeline reporting.
+func (t *Telemetry) RegisterSearchWorker(
+	label string,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.registerTimelineWorker(&t.searchNames, label)
+}
+
+// Registers a processing goroutine for timeline reporting.
+func (t *Telemetry) RegisterProcessingWorker(
+	label string,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.registerTimelineWorker(&t.processingNames, label)
+}
+
+// Records one processing-goroutine activity interval.
+func (t *Telemetry) RecordProcessingSpan(
+	label string,
+	start time.Time,
+	end time.Time,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.recordTimelineSpan(&t.processingSpans, label, start, end)
+}
+
+// Returns a stable copy of the recorded search and processing intervals.
+func (t *Telemetry) Timeline() TimelineSnapshot {
+
+	if t == nil {
+		return TimelineSnapshot{}
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	snapshot := TimelineSnapshot{
+		Processing:      append([]TimelineSpan(nil), t.processingSpans...),
+		ProcessingNames: append([]string(nil), t.processingNames...),
+		Search:          append([]TimelineSpan(nil), t.searchSpans...),
+		SearchNames:     append([]string(nil), t.searchNames...),
+	}
+	sortTimelineSpans(snapshot.Processing)
+	sortTimelineSpans(snapshot.Search)
+	sort.Strings(snapshot.ProcessingNames)
+	sort.Strings(snapshot.SearchNames)
+
+	return snapshot
+}
+
+func (t *Telemetry) registerTimelineWorker(
+	workers *[]string,
+	label string,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, existing := range *workers {
+		if existing == label {
+			return
+		}
+	}
+
+	*workers = append(*workers, label)
+}
+
+func (t *Telemetry) recordTimelineSpan(
+	spans *[]TimelineSpan,
+	label string,
+	start time.Time,
+	end time.Time,
+) {
+
+	if t == nil || end.Before(start) {
+		return
+	}
+
+	originNs := t.timelineOriginNs.Load()
+	if originNs == 0 {
+		return
+	}
+
+	origin := time.Unix(0, originNs)
+	startOffset := start.Sub(origin)
+	endOffset := end.Sub(origin)
+	if startOffset < 0 {
+		startOffset = 0
+	}
+	if endOffset < startOffset {
+		endOffset = startOffset
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	*spans = append(*spans, TimelineSpan{
+		End:   endOffset,
+		Label: label,
+		Start: startOffset,
+	})
+}
+
+func sortTimelineSpans(
+	spans []TimelineSpan,
+) {
+
+	sort.SliceStable(spans, func(i int, j int) bool {
+		if spans[i].Label != spans[j].Label {
+			return spans[i].Label < spans[j].Label
+		}
+		return spans[i].Start < spans[j].Start
+	})
+}
+
+// Records wall-clock time spent traversing the file system.
+func (t *Telemetry) RecordFileSearchDuration(
+	d time.Duration,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.fileSearchDurationNs.Store(durationNanoseconds(d))
+}
+
+// Returns active time spent traversing the file system.
+func (t *Telemetry) FileSearchDuration() time.Duration {
+
+	if t == nil {
+		return 0
+	}
+
+	return time.Duration(t.fileSearchDurationNs.Load())
+}
+
+// Starts the wall-clock file-processing interval.
+func (t *Telemetry) BeginFileProcessing() {
+
+	if t == nil {
+		return
+	}
+
+	t.fileProcessingStartNs.CompareAndSwap(0, time.Now().UnixNano())
+}
+
+// Completes the wall-clock file-processing interval.
+func (t *Telemetry) EndFileProcessing() {
+
+	if t == nil {
+		return
+	}
+
+	startNs := t.fileProcessingStartNs.Load()
+	if startNs == 0 {
+		return
+	}
+
+	t.RecordFileProcessingDuration(time.Since(time.Unix(0, startNs)))
+}
+
+// Records wall-clock time spent reading and hashing file contents.
+func (t *Telemetry) RecordFileProcessingDuration(
+	d time.Duration,
+) {
+
+	if t == nil {
+		return
+	}
+
+	t.fileProcessingDurationNs.Store(durationNanoseconds(d))
+}
+
+// Returns active time spent reading and hashing file contents.
+func (t *Telemetry) FileProcessingDuration() time.Duration {
+
+	if t == nil {
+		return 0
+	}
+
+	return time.Duration(t.fileProcessingDurationNs.Load())
+}
+
 // Records an instantaneous traversal rate in entries per second.
 //
 // Parameters:
@@ -214,7 +465,7 @@ func (t *Telemetry) RecordTraversalDuration(
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.traversalDurationHist.PushEventDuration(d)
+	t.traversalDurationHist.PushEventDuration(time.Duration(durationNanoseconds(d)))
 }
 
 // Records the latency of a 4 KiB prefix block read.
@@ -234,7 +485,7 @@ func (t *Telemetry) RecordPrefixReadLatency(
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.prefixReadLatencyHist.PushEventDuration(d)
+	t.prefixReadLatencyHist.PushEventDuration(time.Duration(durationNanoseconds(d)))
 }
 
 // Records the latency of a hashing operation.
@@ -252,7 +503,7 @@ func (t *Telemetry) RecordHashLatency(
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.hashLatencyHist.PushEventDuration(d)
+	t.hashLatencyHist.PushEventDuration(time.Duration(durationNanoseconds(d)))
 }
 
 // Records the throughput of a hashing operation in bytes per second.
@@ -296,7 +547,7 @@ func (t *Telemetry) RecordPrefixHash(
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.hashLatencyHist.PushEventDuration(d)
+	t.hashLatencyHist.PushEventDuration(time.Duration(durationNanoseconds(d)))
 
 	if d > 0 && bytesProcessed > 0 {
 		ns := d.Nanoseconds()
@@ -330,7 +581,7 @@ func (t *Telemetry) RecordFullStreamHash(
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.hashLatencyHist.PushEventDuration(d)
+	t.hashLatencyHist.PushEventDuration(time.Duration(durationNanoseconds(d)))
 
 	if d > 0 && bytesProcessed > 0 {
 		ns := d.Nanoseconds()
@@ -446,6 +697,17 @@ func extractStats(
 		Min:   minVal,
 		Max:   maxVal,
 	}
+}
+
+func durationNanoseconds(
+	d time.Duration,
+) uint64 {
+
+	if d <= 0 {
+		return 0
+	}
+
+	return uint64(d.Nanoseconds())
 }
 
 /* ///////////////////////////// end of file //////////////////////////// */

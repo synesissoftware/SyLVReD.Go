@@ -15,6 +15,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -162,9 +163,11 @@ func PipelineScanRoots(
 
 	start := time.Now()
 	tel := opts.Telemetry
+	tel.SetTimelineOrigin(start)
 	defer func() {
 		tel.RecordTotalRuntime(time.Since(start))
 	}()
+	defer tel.EndFileProcessing()
 
 	ioWorkers := opts.IOWorkers
 	if ioWorkers <= 0 {
@@ -240,16 +243,21 @@ func PipelineScanRoots(
 		ctx,
 		traversalChan,
 		candidateChan,
+		opts.Telemetry,
 	)
 
 	// Stage 3: Bounded I/O Worker Pool
 	var ioWg sync.WaitGroup
 	for i := 0; i < ioWorkers; i++ {
+		workerId := i + 1
+		workerLabel := fmt.Sprintf("io-%d", workerId)
+		tel.RegisterProcessingWorker(workerLabel)
 		ioWg.Add(1)
 		go func() {
 			defer ioWg.Done()
 			runIOWorker(
 				ctx,
+				workerLabel,
 				candidateChan,
 				prefixChan,
 				ioPool,
@@ -267,11 +275,15 @@ func PipelineScanRoots(
 	// Stage 4: CPU-Pinned Hash Worker Pool
 	var cpuWg sync.WaitGroup
 	for i := 0; i < cpuWorkers; i++ {
+		workerId := i + 1
+		workerLabel := fmt.Sprintf("cpu-%d", workerId)
+		tel.RegisterProcessingWorker(workerLabel)
 		cpuWg.Add(1)
 		go func() {
 			defer cpuWg.Done()
 			runCPUWorker(
 				ctx,
+				workerLabel,
 				prefixChan,
 				survivorChan,
 				ioPool,
@@ -655,6 +667,7 @@ func readPrefixBlock(
 // It terminates when ctx is cancelled or the upstream in channel is closed.
 func runCPUWorker(
 	ctx context.Context,
+	workerLabel string,
 	in <-chan prefixGroup,
 	out chan<- CandidateGroup,
 	ioPool *IOBoundPool,
@@ -673,7 +686,9 @@ func runCPUWorker(
 				return // upstream channel closed and empty; terminate worker cleanly
 			}
 
+			workStart := time.Now()
 			processPrefixGroup(ctx, pg, out, ioPool, tel, setErr)
+			tel.RecordProcessingSpan(workerLabel, workStart, time.Now())
 		}
 	}
 }
@@ -684,6 +699,7 @@ func runCPUWorker(
 // It terminates when ctx is cancelled or the upstream in channel is closed.
 func runIOWorker(
 	ctx context.Context,
+	workerLabel string,
 	in <-chan CandidateGroup,
 	out chan<- prefixGroup,
 	ioPool *IOBoundPool,
@@ -702,7 +718,9 @@ func runIOWorker(
 				return // upstream channel closed and empty; terminate worker cleanly
 			}
 
+			workStart := time.Now()
 			if pg, err := readGroupPrefixes(ctx, group, ioPool, tel); err != nil {
+				tel.RecordProcessingSpan(workerLabel, workStart, time.Now())
 				if ctx.Err() != nil {
 					return
 				}
@@ -720,6 +738,7 @@ func runIOWorker(
 					}
 				}
 			}
+			tel.RecordProcessingSpan(workerLabel, workStart, time.Now())
 
 		}
 	}
@@ -733,6 +752,7 @@ func runSizeBucketer(
 	ctx context.Context,
 	in <-chan FileEntry,
 	out chan<- CandidateGroup,
+	tel *Telemetry,
 ) {
 
 	defer close(out)
@@ -747,6 +767,7 @@ func runSizeBucketer(
 		case entry, ok := <-in:
 
 			if !ok {
+				tel.BeginFileProcessing()
 				emitSizeBuckets(ctx, buckets, out)
 				return // upstream channel closed and empty; terminate worker cleanly
 			}
@@ -777,14 +798,23 @@ func runTraversalProducer(
 	setErr func(error),
 ) {
 
-	defer close(out)
+	start := time.Now()
+	defer func() {
+		close(out)
+		opts.Telemetry.RecordFileSearchDuration(time.Since(start))
+	}()
 
 	searchFlags := recls.Files | recls.Recursive
 	searchOpts := recls.SearchOptions{
 		Flags: searchFlags,
 	}
 
-	runForRoot := func(root string) {
+	runForRoot := func(workerLabel string, root string) {
+
+		searchStart := time.Now()
+		defer func() {
+			opts.Telemetry.RecordSearchSpan(workerLabel, searchStart, time.Now())
+		}()
 
 		var searchSeq func(yield func(recls.Entry, error) bool)
 		if len(opts.Patterns) == 0 {
@@ -857,18 +887,20 @@ func runTraversalProducer(
 	if opts.ConcurrentSearch {
 
 		var wg sync.WaitGroup
-		for _, root := range roots {
+		for i, root := range roots {
+			workerLabel := fmt.Sprintf("search-%d", i+1)
+			opts.Telemetry.RegisterSearchWorker(workerLabel)
 			wg.Add(1)
-			go func(r string) {
+			go func(workerId int, r string) {
 				defer wg.Done()
-				runForRoot(r)
-			}(root)
+				runForRoot(fmt.Sprintf("search-%d", workerId), r)
+			}(i+1, root)
 		}
 
 		wg.Wait()
 	} else {
 
-		for _, root := range roots {
+		for i, root := range roots {
 			select {
 			case <-ctx.Done():
 
@@ -876,7 +908,9 @@ func runTraversalProducer(
 			default:
 			}
 
-			runForRoot(root)
+			workerLabel := fmt.Sprintf("search-%d", i+1)
+			opts.Telemetry.RegisterSearchWorker(workerLabel)
+			runForRoot(workerLabel, root)
 		}
 	}
 }

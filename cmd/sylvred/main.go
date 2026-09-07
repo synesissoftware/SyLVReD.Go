@@ -16,6 +16,7 @@ import (
 	d "github.com/synesissoftware/Diagnosticism.Go"
 	libclimate "github.com/synesissoftware/libCLImate.Go"
 	woad "github.com/synesissoftware/woad.Go"
+	"golang.org/x/term"
 
 	"context"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -83,6 +85,124 @@ func formatThroughput(
 		return fmt.Sprintf("%.2f KiB/s", float64(b)/1024)
 	} else {
 		return fmt.Sprintf("%d B/s", b)
+	}
+}
+
+const (
+	timelineBarColumn   = 30
+	timelineRightMargin = 4
+)
+
+func terminalTimelineWidth() int {
+
+	const defaultTerminalWidth = 80
+
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		width = defaultTerminalWidth
+	}
+
+	barWidth := width - timelineBarColumn - timelineRightMargin
+	if barWidth < 1 {
+		barWidth = 1
+	}
+
+	return barWidth
+}
+
+func timelineBar(
+	spans []sylvred.TimelineSpan,
+	total time.Duration,
+	width int,
+) string {
+
+	if total <= 0 || width <= 0 {
+		return strings.Repeat(" ", width)
+	}
+
+	var builder strings.Builder
+	builder.Grow(width)
+
+	for i := 0; i < width; i++ {
+		cellStart := total * time.Duration(i) / time.Duration(width)
+		cellEnd := total * time.Duration(i+1) / time.Duration(width)
+		active := false
+
+		for _, span := range spans {
+			if span.Start < cellEnd && span.End > cellStart {
+				active = true
+				break
+			}
+		}
+
+		if active {
+			builder.WriteRune('■')
+		} else {
+			builder.WriteRune(' ')
+		}
+	}
+
+	return builder.String()
+}
+
+func timelineBarLine(
+	label string,
+	bar string,
+) string {
+
+	prefix := "  " + label
+	if len(prefix) < timelineBarColumn {
+		prefix += strings.Repeat(" ", timelineBarColumn-len(prefix))
+	} else {
+		prefix += " "
+	}
+
+	return prefix + bar
+}
+
+func renderTimeline(
+	tel *sylvred.Telemetry,
+) {
+
+	total := tel.TotalRuntime()
+	timeline := tel.Timeline()
+	timelineWidth := terminalTimelineWidth()
+
+	fmt.Printf("  Total runtime:           %s\n", formatDuration(total))
+	fmt.Println(timelineBarLine(
+		"",
+		timelineBar([]sylvred.TimelineSpan{{
+			End: total,
+		}}, total, timelineWidth),
+	))
+	fmt.Printf("  File-search time:        %s\n", formatDuration(tel.FileSearchDuration()))
+
+	for _, workerName := range timeline.SearchNames {
+		spans := make([]sylvred.TimelineSpan, 0)
+		for _, span := range timeline.Search {
+			if span.Label == workerName {
+				spans = append(spans, span)
+			}
+		}
+		fmt.Println(timelineBarLine(
+			"    "+workerName,
+			timelineBar(spans, total, timelineWidth),
+		))
+	}
+
+	fmt.Printf("  File-processing time:    %s\n", formatDuration(tel.FileProcessingDuration()))
+
+	for _, workerName := range timeline.ProcessingNames {
+		spans := make([]sylvred.TimelineSpan, 0)
+		for _, span := range timeline.Processing {
+			if span.Label == workerName {
+				spans = append(spans, span)
+			}
+		}
+		fmt.Println(timelineBarLine(
+			"    "+workerName,
+			timelineBar(spans, total, timelineWidth),
+		))
 	}
 }
 
@@ -372,7 +492,7 @@ func run(
 		fmt.Printf("  Prefix blocks read:      %s%s%s\n", clrCount, d.ItoaThousands(tel.PrefixBlocksRead()), clrReset)
 		fmt.Printf("  Full stream hashes:      %s%s%s\n", clrCount, d.ItoaThousands(tel.FullHashesComputed()), clrReset)
 		fmt.Printf("  Total bytes hashed:      %s%s%s bytes\n", clrSize, d.ItoaThousands(tel.BytesHashed()), clrReset)
-		fmt.Printf("  Total runtime:           %s%s%s\n", clrSize, formatDuration(tel.TotalRuntime()), clrReset)
+		renderTimeline(tel)
 	}
 }
 

@@ -32,6 +32,8 @@ func Test_Telemetry_NilSafety(t *testing.T) {
 
 		tel.RecordTraversalRate(100)
 		tel.RecordTraversalDuration(10 * time.Millisecond)
+		tel.RecordFileSearchDuration(10 * time.Millisecond)
+		tel.RecordFileProcessingDuration(10 * time.Millisecond)
 		tel.RecordPrefixReadLatency(50 * time.Microsecond)
 		tel.RecordHashLatency(100 * time.Microsecond)
 		tel.RecordHashThroughput(50_000_000)
@@ -43,6 +45,8 @@ func Test_Telemetry_NilSafety(t *testing.T) {
 		require.Equal(t, uint64(0), tel.HashLatencyStats().Count)
 		require.Equal(t, uint64(0), tel.HashThroughputStats().Count)
 		require.Equal(t, time.Duration(0), tel.TotalRuntime())
+		require.Equal(t, time.Duration(0), tel.FileSearchDuration())
+		require.Equal(t, time.Duration(0), tel.FileProcessingDuration())
 	})
 }
 
@@ -94,6 +98,42 @@ func Test_Telemetry_RecordAndExtract_TotalRuntime(t *testing.T) {
 	tel.RecordTotalRuntime(d)
 
 	require.Equal(t, d, tel.TotalRuntime())
+}
+
+func Test_Telemetry_RecordAndExtract_WorkDurations(t *testing.T) {
+
+	tel := sylvred.NewTelemetry()
+
+	searchDuration := 12 * time.Millisecond
+	processingDuration := 34 * time.Millisecond
+
+	tel.RecordFileSearchDuration(searchDuration)
+	tel.RecordFileProcessingDuration(processingDuration)
+
+	require.Equal(t, searchDuration, tel.FileSearchDuration())
+	require.Equal(t, processingDuration, tel.FileProcessingDuration())
+}
+
+func Test_Telemetry_RecordAndExtract_Timeline(t *testing.T) {
+
+	tel := sylvred.NewTelemetry()
+	origin := time.Unix(100, 0)
+
+	tel.SetTimelineOrigin(origin)
+	tel.RegisterProcessingWorker("cpu-1")
+	tel.RegisterSearchWorker("search-1")
+	tel.RecordProcessingSpan("cpu-1", origin.Add(2*time.Millisecond), origin.Add(8*time.Millisecond))
+	tel.RecordSearchSpan("search-1", origin, origin.Add(10*time.Millisecond))
+
+	timeline := tel.Timeline()
+
+	require.Equal(t, []string{"cpu-1"}, timeline.ProcessingNames)
+	require.Equal(t, []string{"search-1"}, timeline.SearchNames)
+	require.Equal(t, 1, len(timeline.Processing))
+	require.Equal(t, 2*time.Millisecond, timeline.Processing[0].Start)
+	require.Equal(t, 8*time.Millisecond, timeline.Processing[0].End)
+	require.Equal(t, 1, len(timeline.Search))
+	require.Equal(t, 10*time.Millisecond, timeline.Search[0].End)
 }
 
 func Test_Telemetry_RecordAndExtract_TraversalRate(t *testing.T) {

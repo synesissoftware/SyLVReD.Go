@@ -14,12 +14,12 @@ require (
 	github.com/synesissoftware/shwild.Go v0.2.8
 	github.com/synesissoftware/ver2go v0.2.0
 	github.com/synesissoftware/woad.Go v0.1.1
+	golang.org/x/term v0.34.0
 )
 
 require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/term v0.34.0 // indirect
 )
 
 replace (

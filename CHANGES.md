@@ -9,6 +9,9 @@
 * added real-time latency percentile and throughput telemetry manager `Telemetry` instrumented via **p99.Go** ($p_{50}$, $p_{90}$, $p_{99}$);
 * added CLI flags `--io-workers=<N>`, `--cpu-workers=<M>`, and `--telemetry` to `cmd/sylvred`;
 * added telemetry percentile and throughput summary table formatted via **woad.Go** and **Diagnosticism.Go**;
+* added aggregate telemetry for wall-clock file-search time, wall-clock file-processing time, and end-to-end runtime;
+* added block-character execution timelines showing active intervals per search and processing goroutine;
+* made timeline bar width adapt to the runtime terminal width with a right-hand margin;
 * added comparative benchmark suite `pipeline_bench_test.go` evaluating Phase 1 sequential control against Phase 2 concurrent pipeline;
 * added worker-concurrency tuning benchmark covering serial, balanced, and oversubscribed configurations;
 * added comprehensive test coverage validating structured context cancellation, concurrency limits, and equivalence pruning;
