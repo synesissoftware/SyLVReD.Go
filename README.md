@@ -42,7 +42,10 @@ go get "github.com/synesissoftware/SyLVReD.Go"
 
 ## Components
 
-T.B.C.
+The **SyLVReD.Go** project provides:
+
+* **`sylvred`** (root library) — Core deduplication domain types (`FileEntry`, `CandidateGroup`) and sequential discovery engine (`Scan`, `ScanRoots`);
+* **`cmd/sylvred`** — Command-line tool performing directory traversal, duplicate candidate grouping, and potential savings reporting;
 
 
 ## Examples
