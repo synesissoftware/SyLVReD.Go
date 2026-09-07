@@ -37,7 +37,7 @@ func Test_NewFileEntry_CapturesMetadata(t *testing.T) {
 
 	require.NotZero(t, fileEntry.DeviceId())
 	require.NotZero(t, fileEntry.Inode())
-	require.Equal(t, fileEntry.DeviceId(), fileEntry.Device())
+	require.Equal(t, sylvred.DeviceId(fileEntry.DeviceId()), fileEntry.Device())
 	require.Equal(t, int64(14), fileEntry.Size())
 	require.Equal(t, "sample.txt", fileEntry.Name())
 	require.Equal(t, uint64(1), fileEntry.LinkCount())
@@ -46,23 +46,23 @@ func Test_NewFileEntry_CapturesMetadata(t *testing.T) {
 
 func Test_CandidateGroup_PotentialSavings(t *testing.T) {
 	emptyGroup := sylvred.CandidateGroup{
-		Device:  1,
-		Size:    100,
-		Entries: nil,
+		DeviceId: 1,
+		Size:     100,
+		Entries:  nil,
 	}
 	require.Equal(t, int64(0), emptyGroup.PotentialSavings())
 
 	singleGroup := sylvred.CandidateGroup{
-		Device:  1,
-		Size:    100,
-		Entries: make([]sylvred.FileEntry, 1),
+		DeviceId: 1,
+		Size:     100,
+		Entries:  make([]sylvred.FileEntry, 1),
 	}
 	require.Equal(t, int64(0), singleGroup.PotentialSavings())
 
 	tripleGroup := sylvred.CandidateGroup{
-		Device:  1,
-		Size:    100,
-		Entries: make([]sylvred.FileEntry, 3),
+		DeviceId: 1,
+		Size:     100,
+		Entries:  make([]sylvred.FileEntry, 3),
 	}
 	require.Equal(t, int64(200), tripleGroup.PotentialSavings())
 }

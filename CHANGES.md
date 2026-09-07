@@ -1,6 +1,18 @@
 # SyLVReD.Go - Changes <!-- omit in toc -->
 
 
+## 0.2.0-alpha1 - 7th September 2026
+
+* implemented dual-bound staged concurrent pipeline (`PipelineScan`, `PipelineScanRoots`) with traversal producer, in-memory candidate size bucketer, bounded I/O worker pool, and CPU-pinned hash worker pool;
+* implemented bounded concurrency token semaphore `IOBoundPool` limiting concurrent file open calls to prevent `EMFILE`/`ENFILE`;
+* implemented 4 KiB prefix block equivalence pruning and full-stream SHA-256 hash refinement;
+* added real-time latency percentile and throughput telemetry manager `Telemetry` instrumented via **p99.Go** ($p_{50}$, $p_{90}$, $p_{99}$);
+* added CLI flags `--io-workers=<N>`, `--cpu-workers=<M>`, and `--telemetry` to `cmd/sylvred`;
+* added telemetry percentile and throughput summary table formatted via **woad.Go** and **Diagnosticism.Go**;
+* added comparative benchmark suite `pipeline_bench_test.go` evaluating Phase 1 sequential control against Phase 2 concurrent pipeline;
+* added comprehensive test coverage validating structured context cancellation, concurrency limits, and equivalence pruning;
+
+
 ## 0.1.0 - 7th September 2026
 
 * added core domain models `FileEntry` (embedding `recls.Entry`) and `CandidateGroup`;

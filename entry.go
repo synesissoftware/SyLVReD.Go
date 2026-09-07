@@ -33,10 +33,9 @@ func NewFileEntry(
 	}
 }
 
-// Returns the device identifier on which the file resides (delegating to
-// DeviceId).
-func (fe FileEntry) Device() uint64 {
-	return fe.DeviceId()
+// The device identifier on which the file resides (delegating to DeviceId).
+func (fe FileEntry) Device() DeviceId {
+	return DeviceId(fe.DeviceId())
 }
 
 /* ///////////////////////////// end of file //////////////////////////// */

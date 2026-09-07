@@ -10,10 +10,11 @@
 
 ## Phase 2: v0.2.0 - Dual-Bound Concurrent Pipeline & Telemetry
 
-* [ ] Dual-bound staged concurrent pipeline (producer, candidate bucketer, I/O prefix worker pool, compute-bound hasher pool);
-* [ ] Configurable worker concurrency flags (`--io-workers`, `--cpu-workers`);
-* [ ] Real-time latency percentile telemetry ($p_{50}$, $p_{90}$, $p_{99}$) using **p99.Go**;
-* [ ] Channel backpressure buffering and structured context cancellation;
+* [x] Dual-bound staged concurrent pipeline (producer, candidate bucketer, I/O prefix worker pool, compute-bound hasher pool);
+* [x] Configurable worker concurrency flags (`--io-workers`, `--cpu-workers`);
+* [x] Real-time latency percentile telemetry ($p_{50}$, $p_{90}$, $p_{99}$) using **p99.Go**;
+* [x] Channel backpressure buffering and structured context cancellation;
+* [ ] Concurrency tuning and profiling for alpha2 milestone;
 
 
 ## Phase 3: v0.3.0 - Byte Verification, Invariant Safety & Atomic Linking

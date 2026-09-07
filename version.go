@@ -15,9 +15,9 @@ import (
 
 const (
 	VersionMajor uint16 = 0
-	VersionMinor uint16 = 1
+	VersionMinor uint16 = 2
 	VersionPatch uint16 = 0
-	VersionAB    uint16 = ver2go.Release
+	VersionAB    uint16 = ver2go.Alpha1
 )
 
 var (

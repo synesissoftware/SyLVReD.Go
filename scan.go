@@ -19,13 +19,21 @@ import (
 	"slices"
 )
 
+/* /////////////////////////////////////////////////////////////////////////
+ * types
+ */
+
 // Options controlling the sequential filesystem traversal and candidate
 // discovery.
 type ScanOptions struct {
-	// Patterns specifies optional file-name patterns to filter entries.
-	// When empty, all files are matched ("*").
+	// Optional file-name patterns to filter entries. When empty, all files
+	// are matched ("*").
 	Patterns []string
 }
+
+/* /////////////////////////////////////////////////////////////////////////
+ * functions
+ */
 
 // Scans a single root directory recursively, discovering duplicate candidate
 // groups partitioned by physical device and file size.
@@ -53,7 +61,7 @@ func ScanRoots(
 	opts ScanOptions,
 ) ([]CandidateGroup, error) {
 
-	buckets := make(map[uint64]map[int64][]FileEntry)
+	buckets := make(EntriesBySizeByDeviceId)
 
 	searchFlags := recls.Files | recls.Recursive
 	searchOpts := recls.SearchOptions{
@@ -65,12 +73,12 @@ func ScanRoots(
 		cwd = ""
 	}
 
-	for _, root := range roots {
-		canonicalRoot, err := canonicalisePath(root, cwd)
-		if err != nil {
-			return nil, err
-		}
+	canonicalRoots, err := canonicalisePaths(roots, cwd)
+	if err != nil {
+		return nil, err
+	}
 
+	for _, canonicalRoot := range canonicalRoots {
 		fi, err := os.Stat(canonicalRoot)
 		if err != nil {
 			return nil, err
@@ -105,12 +113,12 @@ func ScanRoots(
 			}
 
 			fileEntry := NewFileEntry(entry)
-			dev := fileEntry.DeviceId()
+			deviceId := DeviceId(fileEntry.DeviceId())
 
-			deviceBuckets, exists := buckets[dev]
+			deviceBuckets, exists := buckets[deviceId]
 			if !exists {
-				deviceBuckets = make(map[int64][]FileEntry)
-				buckets[dev] = deviceBuckets
+				deviceBuckets = make(EntriesBySize)
+				buckets[deviceId] = deviceBuckets
 			}
 
 			deviceBuckets[entry.Size()] = append(deviceBuckets[entry.Size()], fileEntry)
@@ -120,43 +128,72 @@ func ScanRoots(
 	return pruneAndOrderBuckets(buckets), nil
 }
 
+/* /////////////////////////////////////////////////////////////////////////
+ * implementation functions
+ */
+
 // Canonicalises a path string using libpath.Go and filepath.Clean.
 func canonicalisePath(
 	rawPath string,
 	referenceDir string,
 ) (string, error) {
 
-	pd, err := libpath_parse.ParsePathString(rawPath, referenceDir)
-	if err != nil {
+	if pd, err := libpath_parse.ParsePathString(rawPath, referenceDir); err != nil {
 		return "", err
+	} else {
+
+		fullPath := pd.FullPath
+		if fullPath == "" {
+			fullPath = rawPath
+		}
+
+		return filepath.Clean(fullPath), nil
+	}
+}
+
+// Canonicalises each input path using canonicalisePath, relative to
+// referenceDir, while preserving slice iteration order.
+//
+// Parameters:
+//   - paths — candidate raw paths to canonicalise;
+//   - referenceDir — directory used as the base for relative path parsing.
+func canonicalisePaths(
+	paths []string,
+	referenceDir string,
+) ([]string, error) {
+
+	canonicalPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if canonicalPath, err := canonicalisePath(path, referenceDir); err != nil {
+			return nil, err
+		} else {
+			canonicalPaths = append(canonicalPaths, canonicalPath)
+		}
 	}
 
-	fullPath := pd.FullPath
-	if fullPath == "" {
-		fullPath = rawPath
-	}
-
-	return filepath.Clean(fullPath), nil
+	return canonicalPaths, nil
 }
 
 // Prunes buckets with fewer than 2 distinct inodes, selects canonical
 // representatives per inode, and orders candidate groups deterministically.
 func pruneAndOrderBuckets(
-	buckets map[uint64]map[int64][]FileEntry,
+	buckets EntriesBySizeByDeviceId,
 ) []CandidateGroup {
 
 	var candidateGroups []CandidateGroup
 
-	for dev, sizeBuckets := range buckets {
+	for deviceId, sizeBuckets := range buckets {
 		for size, entries := range sizeBuckets {
 			if len(entries) < 2 {
 				continue
 			}
 
 			// Partition entries by Inode to identify already hard-linked files.
-			inodeMap := make(map[uint64][]FileEntry)
+			inodeMap := make(map[InodeId][]FileEntry)
 			for _, entry := range entries {
-				inodeMap[entry.Inode()] = append(inodeMap[entry.Inode()], entry)
+				inodeId := InodeId(entry.Inode())
+
+				inodeMap[inodeId] = append(inodeMap[inodeId], entry)
 			}
 
 			// Invariant 2: If all entries share the same Inode, they are
@@ -178,9 +215,9 @@ func pruneAndOrderBuckets(
 			})
 
 			candidateGroups = append(candidateGroups, CandidateGroup{
-				Device:  dev,
-				Size:    size,
-				Entries: groupEntries,
+				DeviceId: deviceId,
+				Size:     size,
+				Entries:  groupEntries,
 			})
 		}
 	}
@@ -190,8 +227,8 @@ func pruneAndOrderBuckets(
 	// 2. Size descending (largest potential savings first);
 	// 3. Master path ascending lexicographically.
 	slices.SortFunc(candidateGroups, func(a CandidateGroup, b CandidateGroup) int {
-		if a.Device != b.Device {
-			return cmp.Compare(a.Device, b.Device)
+		if a.DeviceId != b.DeviceId {
+			return cmp.Compare(a.DeviceId, b.DeviceId)
 		} else if a.Size != b.Size {
 			return cmp.Compare(b.Size, a.Size)
 		} else {

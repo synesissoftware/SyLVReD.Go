@@ -14,12 +14,12 @@ import (
 	"slices"
 )
 
-// Represents a group of candidate files sharing identical device and size
-// attributes with differing inode identities.
+// A group of candidate files sharing identical device and size attributes
+// with differing inode identities.
 type CandidateGroup struct {
-	Device  uint64
-	Size    int64
-	Entries []FileEntry
+	DeviceId DeviceId
+	Size     FileSize
+	Entries  []FileEntry
 }
 
 // Returns the potential storage reclamation in bytes if duplicate files are
